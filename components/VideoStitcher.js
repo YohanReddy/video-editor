@@ -1,6 +1,17 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useToast } from "@/hooks/use-toast";
+import { Progress } from "@/components/ui/progress";
 
 const VideoStitcher = () => {
   const [videoUrls, setVideoUrls] = useState([""]);
@@ -9,8 +20,11 @@ const VideoStitcher = () => {
   const [ffmpeg, setFFmpeg] = useState(null);
   const [isFFmpegLoaded, setIsFFmpegLoaded] = useState(false);
   const [error, setError] = useState(null);
+  const [activePreview, setActivePreview] = useState(null);
+  const [selectedIndex, setSelectedIndex] = useState(null);
+  const timelineRef = useRef(null);
+  const { toast } = useToast();
 
-  // Add this utility function at the top of the component
   const isValidVideoUrl = (url) => {
     try {
       const parsed = new URL(url);
@@ -23,6 +37,14 @@ const VideoStitcher = () => {
   const getProxiedUrl = (url) => {
     if (!url) return "";
     return `/api/proxy-video?url=${encodeURIComponent(url)}`;
+  };
+
+  const showError = (message) => {
+    toast({
+      variant: "destructive",
+      title: "Error",
+      description: message,
+    });
   };
 
   useEffect(() => {
@@ -42,7 +64,7 @@ const VideoStitcher = () => {
         setIsFFmpegLoaded(true);
       } catch (err) {
         console.error("Error loading FFmpeg:", err);
-        setError("Failed to load FFmpeg. Please try again later.");
+        showError("Failed to load FFmpeg. Please try again later.");
         setIsFFmpegLoaded(false);
       }
     };
@@ -69,7 +91,6 @@ const VideoStitcher = () => {
     try {
       const { fetchFile } = window;
 
-      // Download each video through the proxy API
       const downloadedVideos = await Promise.all(
         videoUrls.map(async (url, index) => {
           const response = await fetch(getProxiedUrl(url));
@@ -81,12 +102,10 @@ const VideoStitcher = () => {
         })
       );
 
-      // Save videos to the ffmpeg virtual file system
       downloadedVideos.forEach((file, index) => {
         ffmpeg.FS("writeFile", `video${index}.mp4`, file);
       });
 
-      // Generate a list file to concatenate the videos using FFmpeg
       const fileList = downloadedVideos
         .map((_, index) => `file 'video${index}.mp4'`)
         .join("\n");
@@ -96,7 +115,6 @@ const VideoStitcher = () => {
         new TextEncoder().encode(fileList)
       );
 
-      // Run ffmpeg to concatenate videos
       await ffmpeg.run(
         "-f",
         "concat",
@@ -109,7 +127,6 @@ const VideoStitcher = () => {
         "output.mp4"
       );
 
-      // Read the result and create a downloadable link
       const data = ffmpeg.FS("readFile", "output.mp4");
       const videoBlob = new Blob([data.buffer], { type: "video/mp4" });
       const videoUrl = URL.createObjectURL(videoBlob);
@@ -123,121 +140,152 @@ const VideoStitcher = () => {
     }
   };
 
+  const handleVideoSelect = (index) => {
+    setSelectedIndex(index);
+    setActivePreview(videoUrls[index]);
+  };
+
   return (
-    <div className="min-h-screen bg-gray-100 p-8">
-      <div className="max-w-4xl mx-auto bg-white rounded-lg shadow-lg p-6">
-        <h1 className="text-3xl font-bold text-gray-800 mb-6">
-          Video Stitcher
-        </h1>
-
-        {error && (
-          <div className="bg-red-50 text-red-500 p-4 rounded-lg mb-4">
-            {error}
+    <div className="min-h-screen bg-background text-foreground">
+      <Card className="border-b rounded-none">
+        <CardContent className="max-w-7xl mx-auto flex items-center justify-between p-4">
+          <CardTitle className="text-2xl">Video Editor</CardTitle>
+          <div className="flex gap-4">
+            <Button variant="secondary" onClick={addUrlField}>
+              Add Video
+            </Button>
+            <Button
+              onClick={handleStitchVideos}
+              disabled={isLoading || !isFFmpegLoaded}
+            >
+              {isLoading ? "Processing..." : "Export"}
+            </Button>
           </div>
-        )}
+        </CardContent>
+      </Card>
 
-        {!isFFmpegLoaded && !error && (
-          <div className="flex items-center justify-center p-4 bg-blue-50 rounded-lg">
-            <div className="animate-spin mr-2 h-5 w-5 border-2 border-blue-500 rounded-full border-t-transparent"></div>
-            <p className="text-blue-600">Loading FFmpeg...</p>
-          </div>
-        )}
-
-        <div className="space-y-4 mb-6">
-          {videoUrls.map((url, index) => (
-            <div key={index} className="space-y-2">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={url}
-                  placeholder={`Video URL ${index + 1}`}
-                  onChange={(event) => handleUrlChange(index, event)}
-                  className="flex-1 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+      <div className="max-w-7xl mx-auto p-6 grid grid-cols-12 gap-6">
+        <Card className="col-span-8">
+          <CardContent className="p-4">
+            <div className="aspect-video bg-muted rounded-lg overflow-hidden mb-4">
+              {activePreview ? (
+                <video
+                  key={activePreview}
+                  src={getProxiedUrl(activePreview)}
+                  controls
+                  className="w-full h-full object-contain"
                 />
-                <button
-                  onClick={() => removeUrlField(index)}
-                  className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
-                >
-                  Remove
-                </button>
-              </div>
-              {url && isValidVideoUrl(url) && (
-                <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
-                  <video
-                    key={url} // Add key to force re-render when URL changes
-                    src={getProxiedUrl(url)}
-                    controls
-                    className="w-full h-full object-contain"
-                    onError={(e) => {
-                      // Don't hide the video element, just show error overlay
-                      const errorOverlay = document.createElement("div");
-                      errorOverlay.className =
-                        "absolute inset-0 flex items-center justify-center text-white bg-black bg-opacity-75";
-                      errorOverlay.innerHTML =
-                        "Unable to preview video. The URL might be restricted or invalid.";
-                      e.target.parentElement.appendChild(errorOverlay);
-                    }}
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                  Select a video to preview
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="col-span-4">
+          <CardHeader>
+            <CardTitle>Properties</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {selectedIndex !== null && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm text-muted-foreground">
+                    Video URL
+                  </label>
+                  <Input
+                    value={videoUrls[selectedIndex]}
+                    onChange={(e) => handleUrlChange(selectedIndex, e)}
+                    placeholder="Enter video URL"
                   />
                 </div>
-              )}
-              {url && !isValidVideoUrl(url) && (
-                <div className="p-2 text-red-500 bg-red-50 rounded">
-                  Please enter a valid video URL
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <div className="flex gap-4 mb-6">
-          <button
-            onClick={addUrlField}
-            className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
-          >
-            Add Another URL
-          </button>
-          <button
-            onClick={handleStitchVideos}
-            disabled={isLoading || !isFFmpegLoaded}
-            className={`px-4 py-2 rounded-lg text-white transition-colors ${
-              isLoading || !isFFmpegLoaded
-                ? "bg-gray-400 cursor-not-allowed"
-                : "bg-blue-500 hover:bg-blue-600"
-            }`}
-          >
-            {isLoading ? (
-              <span className="flex items-center">
-                <span className="animate-spin h-4 w-4 mr-2 border-2 border-white rounded-full border-t-transparent"></span>
-                Processing...
-              </span>
-            ) : (
-              "Stitch Videos"
+              </div>
             )}
-          </button>
-        </div>
+          </CardContent>
+        </Card>
 
-        {downloadLink && (
-          <div className="mt-6 p-4 bg-green-50 rounded-lg">
-            <h3 className="text-lg font-semibold text-green-800 mb-2">
-              Download Combined Video:
-            </h3>
-            <div className="space-y-4">
-              <video
-                src={downloadLink}
-                controls
-                className="w-full rounded-lg"
-              />
-              <a
-                href={downloadLink}
-                download="stitched-video.mp4"
-                className="inline-block px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
-              >
+        <Card className="col-span-12">
+          <CardHeader>
+            <CardTitle>Timeline</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div
+              ref={timelineRef}
+              className="flex gap-4 overflow-x-auto pb-4 min-h-[160px]"
+            >
+              {videoUrls.map((url, index) => (
+                <div
+                  key={index}
+                  onClick={() => handleVideoSelect(index)}
+                  className={`relative flex-shrink-0 w-[200px] rounded-lg border-2 transition-all ${
+                    selectedIndex === index
+                      ? "border-primary"
+                      : "border-transparent hover:border-primary/50"
+                  }`}
+                >
+                  {url && isValidVideoUrl(url) ? (
+                    <div className="aspect-video bg-muted rounded-lg overflow-hidden">
+                      <video
+                        src={getProxiedUrl(url)}
+                        className="w-full h-full object-cover"
+                      />
+                      <Button
+                        variant="destructive"
+                        size="icon"
+                        className="absolute top-2 right-2 h-8 w-8"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeUrlField(index);
+                        }}
+                      >
+                        ✕
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="aspect-video bg-muted rounded-lg flex items-center justify-center text-muted-foreground">
+                      Drop video here
+                    </div>
+                  )}
+                  <div className="mt-2 text-sm text-muted-foreground truncate px-2">
+                    Video {index + 1}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Dialog open={!!downloadLink} onOpenChange={() => setDownloadLink(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Export Complete</DialogTitle>
+          </DialogHeader>
+          <video
+            src={downloadLink}
+            controls
+            className="w-full rounded-lg mb-4"
+          />
+          <div className="flex justify-end">
+            <Button asChild>
+              <a href={downloadLink} download="edited-video.mp4">
                 Download Video
               </a>
-            </div>
+            </Button>
           </div>
-        )}
-      </div>
+        </DialogContent>
+      </Dialog>
+
+      {!isFFmpegLoaded && !error && (
+        <div className="fixed inset-0 bg-background/90 flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <Progress value={30} className="w-[60%] mx-auto" />
+            <p className="text-xl">Loading Editor...</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
